@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    // Design vor dem ersten Zeichnen setzen (kein Aufblitzen des hellen Designs)
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem("theme"); } catch (e) {}
+      if (t !== "dark" && t !== "light") {
+        t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+  <title>Parametrisierte Flächen – WebGL</title>
+  <meta name="description" content="Regenschirm, Schneckengehäuse und ein selbst parametrisierter Rennradreifen (algorithmisch erzeugt), als Linien und als kolorierte Flächen in WebGL.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#steuerung">Zur Steuerung springen</a>
+
+  <header>
+    <div class="topbar">
+      <button type="button" id="theme-switch" class="theme-switch" role="switch" aria-checked="false">
+        <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+        <span>Dunkles Design</span>
+      </button>
+    </div>
+    <div class="intro">
+      <h1>Parametrisierte Flächen</h1>
+      <p>Drei Flächen, berechnet aus ihren Formeln: ein Regenschirm, ein Schneckengehäuse und ein Rennradreifen mit Profil. Jede Fläche entsteht aus einem Gitter der Parameter <var>u</var> und <var>v</var>, erst als Linien, dann als kolorierte Dreiecke.</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="stage" aria-labelledby="h-zeichnung">
+      <h2 id="h-zeichnung">Die Flächen</h2>
+
+      <div class="stage-3d">
+        <figure class="gl-wrap gl-square">
+          <canvas id="gl" class="gl-canvas" width="900" height="900" tabindex="0" role="img" aria-labelledby="canvas-desc"
+                  aria-describedby="rotate-hint">
+            Ihr Browser kann das Canvas-Element nicht darstellen.
+          </canvas>
+          <figcaption id="canvas-desc" class="visually-hidden">Parametrisierte Fläche.</figcaption>
+        </figure>
+
+        <div id="steuerung" class="panel-3d" tabindex="-1">
+          <div>
+            <p class="surface-title" id="surface-name">–</p>
+            <p class="surface-sub" id="surface-sub">–</p>
+          </div>
+
+          <div class="select" role="group" aria-label="Fläche wählen">
+            <button type="button" class="seg" data-surface="schirm" aria-pressed="true">Regenschirm</button>
+            <button type="button" class="seg" data-surface="schnecke" aria-pressed="false">Schnecke</button>
+            <button type="button" class="seg" data-surface="reifen" aria-pressed="false">Reifen</button>
+          </div>
+          <button type="button" id="btn-next" class="btn btn-primary" aria-keyshortcuts="B">Nächste Fläche <kbd aria-hidden="true">B</kbd></button>
+
+          <div class="select" role="radiogroup" aria-labelledby="mode-label">
+            <span class="select-label" id="mode-label">Darstellung <kbd aria-hidden="true">L</kbd>:</span>
+            <button type="button" class="seg" role="radio" data-mode="linien" aria-checked="false" tabindex="-1">Linien</button>
+            <button type="button" class="seg" role="radio" data-mode="fuellung" aria-checked="false" tabindex="-1">Füllung</button>
+            <button type="button" class="seg" role="radio" data-mode="beides" aria-checked="true" tabindex="0">Beides</button>
+          </div>
+
+          <div class="params" id="params" role="group" aria-label="Konstanten der Fläche"></div>
+
+          <div class="options" style="justify-content:flex-start">
+            <label class="check"><input type="checkbox" id="toggle-spin"> Automatisch drehen</label>
+            <label class="check"><input type="checkbox" id="toggle-shortcuts" checked aria-describedby="shortcut-hint"> Tastenkürzel B und L</label>
+            <button type="button" id="btn-reset" class="btn">Ansicht zurücksetzen</button>
+          </div>
+          <p id="shortcut-hint" class="visually-hidden">Einzeltasten B für die nächste Fläche und L für die Darstellung. Abschalten, wenn sie mit Hilfsmitteln kollidieren.</p>
+          <p id="rotate-hint" class="hint">Drehen: Zeichnung mit der Maus ziehen oder anklicken und Pfeiltasten verwenden (mit Umschalt schneller).</p>
+
+          <dl class="stats stats-col" aria-label="Kennzahlen der aktuellen Fläche">
+            <div><dt>Vertices (Füllung):</dt><dd id="stat-vertices">–</dd></div>
+            <div><dt>Dreiecke:</dt><dd id="stat-triangles">–</dd></div>
+            <div><dt>Liniensegmente:</dt><dd id="stat-lines">–</dd></div>
+            <div><dt>Teilflächen = drawElements-Aufrufe je Modus:</dt><dd id="stat-calls">–</dd></div>
+            <div><dt>Skalierung c:</dt><dd id="stat-scale">–</dd></div>
+          </dl>
+          <p class="ndc" id="ndc-range"></p>
+          <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">WebGL wird gestartet …</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc doc-wide" aria-labelledby="h-formeln">
+      <h2 id="h-formeln">Formeln und Quellen</h2>
+      <p>Alle drei Flächen haben die Form (<var>u</var>, <var>v</var>) → (<var>x</var>, <var>y</var>, <var>z</var>). Das Programm tastet <var>u</var> und <var>v</var> in gleichen Schritten ab, berechnet für jeden Gitterpunkt die Koordinaten und verbindet die Punkte zu Linien bzw. Dreiecken. Die Konstanten lassen sich oben mit den Schiebern verändern.</p>
+
+      <div class="cards">
+        <article class="formula-card" id="card-schirm" aria-labelledby="h-schirm">
+          <h3 id="h-schirm">Regenschirm</h3>
+          <p class="muted">Umbrella Surface – <a href="http://www.3d-meier.de/tut3/Seite215.html">3d-meier.de, Seite 215</a>, Gleichungen 208-1 bis 208-4; dort nach der Encyclopedia of Analytical Surfaces, Kapitel 6.1.</p>
+          <div class="formula" aria-label="Formel Regenschirm">
+            <div><var>x</var> = <var>u</var><sup>1/3</sup> · [ (<var>R</var> − <var>r</var>) cos <var>v</var> + <var>r</var> cos((<var>n</var> − 1)<var>v</var>) ]</div>
+            <div><var>y</var> = <var>u</var><sup>1/3</sup> · [ (<var>R</var> − <var>r</var>) sin <var>v</var> − <var>r</var> sin((<var>n</var> − 1)<var>v</var>) ]</div>
+            <div><var>z</var> = <var>h</var> (1 − <var>u</var>), &nbsp; <var>r</var> = <var>R</var> / <var>n</var></div>
+          </div>
+          <dl class="facts">
+            <dt>Wertebereich</dt><dd><var>u</var> ∈ [0, 1], <var>v</var> ∈ [0, 2π]</dd>
+            <dt>Konstanten</dt><dd><var>R</var> = 1, <var>h</var> = 0,6, <var>n</var> = 8 (veränderbar)</dd>
+            <dt>Form</dt><dd>Der Rand ist eine Hypozykloide mit <var>n</var> Spitzen – das sind die Enden der Speichen; dazwischen biegt sich der Stoff nach innen.</dd>
+            <dt>Kolorierung</dt><dd>Jede Bahn zwischen zwei Speichen bekommt einen eigenen Farbton (Regenbogen über <var>v</var>), zur Spitze heller, an den Nähten dunkler.</dd>
+            <dt>Ergänzt</dt><dd>Stock (Zylinder) und Griff (halber Torus) als zusätzliche Teilflächen.</dd>
+          </dl>
+        </article>
+
+        <article class="formula-card" id="card-schnecke" aria-labelledby="h-schnecke">
+          <h3 id="h-schnecke">Schneckengehäuse</h3>
+          <p class="muted">Schnecke II – <a href="http://www.3d-meier.de/tut3/Seite235.html">3d-meier.de, Seite 235</a>, Gleichungen 228-1 bis 228-3.</p>
+          <div class="formula" aria-label="Formel Schneckengehäuse">
+            <div><var>x</var> = <var>a</var><sup><var>v</var></sup> sin²(<var>u</var>) sin(<var>v</var>)</div>
+            <div><var>y</var> = <var>a</var><sup><var>v</var></sup> sin²(<var>u</var>) cos(<var>v</var>)</div>
+            <div><var>z</var> = <var>a</var><sup><var>v</var></sup> sin(<var>u</var>) cos(<var>u</var>)</div>
+          </div>
+          <dl class="facts">
+            <dt>Wertebereich</dt><dd><var>u</var> ∈ [0, π], <var>v</var> ∈ [−2π, 2π]</dd>
+            <dt>Konstanten</dt><dd><var>a</var> = 1,16 (veränderbar); der <var>v</var>-Bereich lässt sich zum Ausprobieren auf [−wπ, wπ] ändern.</dd>
+            <dt>Form</dt><dd>Für festes <var>v</var> beschreibt <var>u</var> einen geschlossenen Querschnitt; der Faktor <var>a</var><sup><var>v</var></sup> lässt ihn mit jeder Umdrehung exponentiell wachsen.</dd>
+            <dt>Kolorierung</dt><dd>Verlauf über <var>v</var> von Creme (Spitze) zu Karamell (Öffnung), dunkle Spiralbänder bei festen <var>u</var>-Werten, feine Anwachsstreifen über <var>v</var>.</dd>
+          </dl>
+        </article>
+
+        <article class="formula-card" id="card-reifen" aria-labelledby="h-reifen">
+          <h3 id="h-reifen">Rennradreifen mit Profil <span class="badge">Eigene Kreation</span></h3>
+          <p class="muted">Eigene Parametrisierung, aufbauend auf dem Torus. Passt zur Reihe der bisherigen Aufgaben (Rennrad aus der Handskizze).</p>
+          <div class="formula" aria-label="Formel Rennradreifen">
+            <div><var>x</var> = (<var>R</var> + ρ(<var>u</var>, <var>v</var>) cos <var>v</var>) cos <var>u</var></div>
+            <div><var>y</var> = <var>q</var> · ρ(<var>u</var>, <var>v</var>) sin <var>v</var></div>
+            <div><var>z</var> = (<var>R</var> + ρ(<var>u</var>, <var>v</var>) cos <var>v</var>) sin <var>u</var></div>
+            <div>ρ(<var>u</var>, <var>v</var>) = ρ<sub>0</sub> · [ 1 + <var>k</var> · max(0, cos <var>v</var>)<sup>6</sup> · max(0, sin(<var>N u</var>)) ]</div>
+          </div>
+          <dl class="facts">
+            <dt>Wertebereich</dt><dd><var>u</var> ∈ [0, 2π], <var>v</var> ∈ [0, 2π]</dd>
+            <dt>Konstanten</dt><dd><var>R</var> = 0,78, ρ<sub>0</sub> = 0,16, <var>q</var> = 0,62, <var>k</var> = 0,14, <var>N</var> = 48 (<var>q</var>, <var>k</var>, <var>N</var> veränderbar)</dd>
+            <dt>Idee</dt><dd><var>q</var> &lt; 1 drückt den runden Torus-Querschnitt zur Ellipse – wie ein aufgepumpter Reifen. max(0, cos <var>v</var>)<sup>6</sup> ist nur auf der Lauffläche größer als 0, sin(<var>N u</var>) setzt dort <var>N</var> Stollen rund um das Rad. Mit <var>k</var> = 0 entsteht ein glatter Slick.</dd>
+            <dt>Kolorierung</dt><dd>Gummischwarz, die Stollen über ihre Höhe heller, ein blauer Zierstreifen an der Flanke (Felgenblau aus Aufgabe 3).</dd>
+            <dt>Ergänzt</dt><dd>Felge (abgeflachter Torus), Nabe (Zylinder) und 24 gekreuzte Speichen (dünne Zylinder).</dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="doc doc-wide" aria-labelledby="h-umsetzung">
+      <h2 id="h-umsetzung">Umsetzung</h2>
+      <p><strong>Ein Generator für alle Flächen:</strong> Jede Fläche ist nur eine Funktion <code>f(u, v)</code> mit Wertebereichen und Auflösung. Der Generator tastet das Parametergebiet in <var>n<sub>u</sub></var> × <var>n<sub>v</sub></var> Vierecke ab. Für die <strong>Linien</strong> zieht er Kurven mit festem <var>u</var> (laufen in <var>v</var>-Richtung) und mit festem <var>v</var> (laufen in <var>u</var>-Richtung) und zeichnet sie mit <code>gl.LINES</code>. Für die <strong>Füllung</strong> wird jedes Viereck in zwei Dreiecke zerlegt und mit <code>gl.TRIANGLES</code> gezeichnet.</p>
+      <pre class="code"><code>for (let i = 0; i &lt; nU; i++)
+  for (let j = 0; j &lt; nV; j++) {
+    // Ecken (i, j), (i+1, j), (i+1, j+1), (i, j+1) → f(u, v), Normale, Farbe
+    indices.push(b, b + 1, b + 2,  b, b + 2, b + 3);   // 2 Dreiecke je Viereck
+  }</code></pre>
+      <p><strong>Skalierung ins NDC:</strong> Ohne Kamera muss jeder sichtbare Punkt im Würfel [−1, 1]³ liegen. Das Programm bestimmt nach dem Erzeugen den Mittelpunkt und den größten Abstand <var>d</var> eines Punktes davon und setzt <var>c</var> = 0,92 / <var>d</var>. Im Vertex-Shader gilt dann <code>gl_Position = vec4(c · (pos − mitte), 1)</code> (nach der Drehung). Weil der Abstand zur Mitte bei jeder Drehung gleich bleibt, verlässt die Fläche den Würfel auch beim Drehen nicht. Der aktuelle Wert von <var>c</var> steht neben der Zeichnung.</p>
+      <p><strong>Drehen ohne Kamera:</strong> Die Fläche wird im Vertex-Shader mit einer Rotationsmatrix gedreht (Objekt-Drehung um zwei Achsen), es gibt keine Projektion. Der Tiefentest sorgt dafür, dass vordere Teile hintere verdecken; <code>polygonOffset</code> schiebt die Füllung minimal nach hinten, damit die Linien darauf sichtbar bleiben.</p>
+      <p><strong>Algorithmische Kolorierung:</strong> Die Farbe jeder Ecke wird aus ihren Parametern <var>u</var>, <var>v</var> berechnet – beim Schirm aus der Bahn, in der sie liegt, bei der Schnecke aus Wachstum und Spiralbändern, beim Reifen aus der Höhe der Stollen. WebGL interpoliert dazwischen. Zusätzlich hellt eine einfache Beleuchtung (Lambert, beidseitig) Flächen auf, die zum Licht zeigen; die Normalen bestimmt das Programm numerisch aus den Ableitungen von <code>f</code> nach <var>u</var> und <var>v</var>.</p>
+      <p><strong>Mehrere Objekte:</strong> Schirm und Reifen bestehen aus mehreren Teilflächen (Dach, Stock, Griff bzw. Reifen, Felge, Nabe, Speichen). Jede hat eigene Puffer und wird mit einem eigenen <code>drawElements</code>-Aufruf gezeichnet.</p>
+    </section>
+
+    <section class="doc" aria-labelledby="h-bedienung">
+      <h2 id="h-bedienung">Bedienung</h2>
+      <div class="table-scroll">
+        <table class="keys">
+          <caption>Tastenkürzel (abschaltbar)</caption>
+          <thead><tr><th scope="col">Taste</th><th scope="col">Wirkung</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>B</kbd></td><td>Nächste Fläche (auch per Button oder durch Wahl der Fläche).</td></tr>
+            <tr><td><kbd>L</kbd></td><td>Darstellung wechseln: Linien → Füllung → Beides.</td></tr>
+            <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Fläche drehen, wenn die Zeichnung den Fokus hat; mit <kbd>Umschalt</kbd> in größeren Schritten.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Mit der Maus lässt sich die Fläche durch Ziehen drehen. Die Schieber verändern die Konstanten der Formel; die Fläche wird sofort neu berechnet.</p>
+    </section>
+
+    <section class="doc" aria-labelledby="h-a11y">
+      <h2 id="h-a11y">Barrierefreiheit</h2>
+      <dl class="hci">
+        <dt>Tastatur</dt>
+        <dd>Alles ist ohne Maus bedienbar: Buttons, Schieber, Radio-Gruppe mit Pfeiltasten, Drehen mit Pfeiltasten auf der fokussierten Zeichnung. Die Einzeltasten B und L lassen sich abschalten (2.1.1, 2.1.4).</dd>
+        <dt>Textalternative</dt>
+        <dd>Das Canvas trägt <code>role="img"</code> und eine Beschreibung der jeweils gezeigten Fläche; Formeln, Wertebereiche und Farben stehen zusätzlich als Text auf der Seite (1.1.1).</dd>
+        <dt>Bewegung</dt>
+        <dd>Die automatische Drehung startet nie von selbst und lässt sich jederzeit anhalten (2.2.2).</dd>
+        <dt>Zustände und Rückmeldung</dt>
+        <dd>Gewählte Fläche und Darstellung sind mit Haken markiert, nicht nur farbig; Änderungen werden über eine Statusmeldung angesagt (1.4.1, 4.1.3).</dd>
+      </dl>
+    </section>
+
+    <section class="doc" aria-labelledby="h-qa">
+      <h2 id="h-qa">Test und Qualitätssicherung</h2>
+      <p>Getestet in Chrome unter macOS in beiden Designs: alle drei Flächen in allen drei Darstellungen, Taste B und L, Buttons, alle Schieber bis an ihre Grenzen, Drehen per Maus und Pfeiltasten, automatische Drehung. Der Generator prüft, dass keine Teilfläche mehr als 65.535 Vertices hat (Grenze für <code>UNSIGNED_SHORT</code>-Indizes). Die Konsole (<kbd>Cmd</kbd>+<kbd>Alt</kbd>+<kbd>J</kbd>) zeigt nur eine Info-Meldung, keine Fehler.</p>
+    </section>
+
+    <section class="doc" aria-labelledby="h-quellen">
+      <h2 id="h-quellen">Quellen</h2>
+      <ul class="sources">
+        <li><strong>Umbrella Surface:</strong> Jürgen Meier, Parametrische Flächen und Körper, <a href="http://www.3d-meier.de/tut3/Seite215.html">Seite 215</a>; dort zitiert nach S. N. Krivoshapko, V. N. Ivanov: Encyclopedia of Analytical Surfaces, Kapitel 6.1.</li>
+        <li><strong>Schnecke II:</strong> Jürgen Meier, Parametrische Flächen und Körper, <a href="http://www.3d-meier.de/tut3/Seite235.html">Seite 235</a> (Quelle [102] der Seite).</li>
+        <li><strong>Rennradreifen mit Profil:</strong> eigene Parametrisierung; Farben aus der eigenen Kolorierung in Aufgabe 3.</li>
+        <li><strong>Ausprobieren von Formeln:</strong> <a href="https://stemkoski.github.io/Three.js/Graphulus-Surface.html">Graphulus Surface (Lee Stemkoski)</a>.</li>
+        <li><strong>Schrift:</strong> Bricolage Grotesque, Mathieu Triay, SIL Open Font License, über <a href="https://fonts.google.com/specimen/Bricolage+Grotesque">Google Fonts</a>.</li>
+        <li><strong>Referenzen:</strong> <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/drawElements">MDN: drawElements()</a>, <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/polygonOffset">MDN: polygonOffset()</a>.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Thomas Brehmer, M.Sc. Medieninformatik, BHT Berlin</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
